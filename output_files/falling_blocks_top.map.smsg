@@ -1,0 +1,1 @@
+Info (10281): Verilog HDL Declaration information at game_logic.v(7): object "PLAYER_Y" differs only in case from object "player_y" in the same scope File: M:/ECE287/Labs/Final_Project/game_logic.v Line: 7
