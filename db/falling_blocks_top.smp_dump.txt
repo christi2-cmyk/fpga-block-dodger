@@ -1,0 +1,6 @@
+
+State Machine - |falling_blocks_top|game_logic:game|state
+Name state.S_RESET state.S_GAME_OVER state.S_PLAY 
+state.S_RESET 0 0 0 
+state.S_PLAY 1 0 1 
+state.S_GAME_OVER 1 1 0 
