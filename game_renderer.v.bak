@@ -1,0 +1,68 @@
+module game_renderer
+#(
+    parameter PLAYER_W = 32,
+    parameter PLAYER_H = 16,
+    parameter BLOCK_W  = 32,
+    parameter BLOCK_H  = 32
+)
+(
+    input  wire [9:0] x,
+    input  wire [9:0] y,
+    input  wire       display_on,
+
+    input  wire [9:0] player_x,
+    input  wire [9:0] player_y,
+
+    input  wire [9:0] block0_x,
+    input  wire [9:0] block0_y,
+    input  wire [9:0] block1_x,
+    input  wire [9:0] block1_y,
+    input  wire [9:0] block2_x,
+    input  wire [9:0] block2_y,
+
+    input  wire       game_over,
+
+    output reg  [2:0] rgb   // {R,G,B}, 1-bit each
+);
+
+    localparam [9:0] PLAYER_W_PX = PLAYER_W;
+    localparam [9:0] PLAYER_H_PX = PLAYER_H;
+    localparam [9:0] BLOCK_W_PX  = BLOCK_W;
+    localparam [9:0] BLOCK_H_PX  = BLOCK_H;
+
+    reg player_pixel;
+    reg block0_pixel;
+    reg block1_pixel;
+    reg block2_pixel;
+
+    always @* begin
+        // Compute whether current pixel is inside each object
+        player_pixel =
+            (x >= player_x) && (x < (player_x + PLAYER_W_PX)) &&
+            (y >= player_y) && (y < (player_y + PLAYER_H_PX));
+
+        block0_pixel =
+            (x >= block0_x) && (x < (block0_x + BLOCK_W_PX)) &&
+            (y >= block0_y) && (y < (block0_y + BLOCK_H_PX));
+
+        block1_pixel =
+            (x >= block1_x) && (x < (block1_x + BLOCK_W_PX)) &&
+            (y >= block1_y) && (y < (block1_y + BLOCK_H_PX));
+
+        block2_pixel =
+            (x >= block2_x) && (x < (block2_x + BLOCK_W_PX)) &&
+            (y >= block2_y) && (y < (block2_y + BLOCK_H_PX));
+
+        if (!display_on) begin
+            rgb = 3'b000;               // off-screen area = black
+        end else if (player_pixel) begin
+            rgb = 3'b010;               // green player
+        end else if (block0_pixel || block1_pixel || block2_pixel) begin
+            rgb = 3'b100;               // red blocks
+        end else begin
+            // background color: blue normally, red when game over
+            rgb = game_over ? 3'b100 : 3'b001;
+        end
+    end
+
+endmodule

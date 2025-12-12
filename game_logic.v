@@ -1,0 +1,233 @@
+module game_logic 
+#(
+    parameter SCREEN_W      = 640,
+    parameter SCREEN_H      = 480,
+    parameter PLAYER_W      = 110,
+    parameter PLAYER_H      = 20,
+    parameter PLAYER_Y      = 440,   // constant vertical position
+    parameter BLOCK_W       = 110,
+    parameter BLOCK_H       = 32,
+    parameter INITIAL_SPEED = 4,
+    parameter MAX_SPEED     = 12
+)
+(
+    input  wire       clk,
+    input  wire       reset,        // active high
+    input  wire       frame_tick,   // 1 clk pulse at start of each frame
+    input  wire       move_left,
+    input  wire       move_right,
+    input  wire       restart,
+    input  wire [7:0] rand_val,
+
+    output reg  [9:0] player_x,
+    output wire [9:0] player_y,
+
+    output reg  [9:0] block0_x,
+    output reg  [9:0] block0_y,
+    output reg  [9:0] block1_x,
+    output reg  [9:0] block1_y,
+    output reg  [9:0] block2_x,
+    output reg  [9:0] block2_y,
+
+    output reg  [15:0] score,
+    output wire        game_over,
+    output reg  [1:0]  state      // expose FSM state directly
+);
+
+    localparam [9:0] PLAYER_Y_POS = PLAYER_Y;
+    localparam [9:0] PLAYER_W_PX  = PLAYER_W;
+    localparam [9:0] PLAYER_H_PX  = PLAYER_H;
+    localparam [9:0] BLOCK_W_PX   = BLOCK_W;
+    localparam [9:0] BLOCK_H_PX   = BLOCK_H;
+
+    assign player_y  = PLAYER_Y_POS;
+
+    // FSM states
+    localparam [1:0] S_TITLE     = 2'd0,
+                     S_RESET     = 2'd1,
+                     S_PLAY      = 2'd2,
+                     S_GAME_OVER = 2'd3;
+
+    reg [1:0] next_state;
+    reg [3:0] speed;
+
+    reg [7:0] grace_counter;              // ~60 frames of invincibility
+    wire      in_grace = (grace_counter != 0);
+
+    // Convert lane index (0,1,2) → x coordinate
+    function [9:0] lane_to_x;
+        input [1:0] lane;
+        begin
+            case (lane)
+                2'd0: lane_to_x = (SCREEN_W/6)  - (BLOCK_W_PX/2);
+                2'd1: lane_to_x = (SCREEN_W/2)  - (BLOCK_W_PX/2);
+                2'd2: lane_to_x = (5*SCREEN_W/6)- (BLOCK_W_PX/2);
+                default: lane_to_x = (SCREEN_W/2) - (BLOCK_W_PX/2);
+            endcase
+        end
+    endfunction
+
+    // Rectangle overlap for collision detection
+    function rect_overlap;
+        input [9:0] ax, ay, aw, ah;
+        input [9:0] bx, by, bw, bh;
+        begin
+            rect_overlap =
+                (ax < bx + bw) && (ax + aw > bx) &&
+                (ay < by + bh) && (ay + ah > by);
+        end
+    endfunction
+
+    wire collision0 = rect_overlap(
+        player_x,        PLAYER_Y_POS, PLAYER_W_PX, PLAYER_H_PX,
+        block0_x,        block0_y,     BLOCK_W_PX,  BLOCK_H_PX
+    );
+
+    wire collision1 = rect_overlap(
+        player_x,        PLAYER_Y_POS, PLAYER_W_PX, PLAYER_H_PX,
+        block1_x,        block1_y,     BLOCK_W_PX,  BLOCK_H_PX
+    );
+
+    wire collision2 = rect_overlap(
+        player_x,        PLAYER_Y_POS, PLAYER_W_PX, PLAYER_H_PX,
+        block2_x,        block2_y,     BLOCK_W_PX,  BLOCK_H_PX
+    );
+
+    wire collision = collision0 | collision1 | collision2;
+
+    // FSM next-state logic
+    always @* begin
+        next_state = state;
+        case (state)
+            S_TITLE: begin
+                if (restart)
+                    next_state = S_RESET;
+            end
+
+            S_RESET: begin
+                if (frame_tick)
+                    next_state = S_PLAY;
+            end
+
+            S_PLAY: begin
+                if (collision && !in_grace)
+                    next_state = S_GAME_OVER;
+            end
+
+            S_GAME_OVER: begin
+                if (restart)
+                    next_state = S_TITLE;
+            end
+        endcase
+    end
+
+    assign game_over = (state == S_GAME_OVER);
+
+    // State & game registers update
+    always @(posedge clk or posedge reset) begin
+        if (reset) begin
+            state    <= S_TITLE;
+
+            player_x <= (SCREEN_W - PLAYER_W_PX) / 2;
+
+            block0_y <= 10'd0;
+            block1_y <= 10'd160;
+            block2_y <= 10'd320;
+
+            block0_x <= lane_to_x(2'd0);
+            block1_x <= lane_to_x(2'd1);
+            block2_x <= lane_to_x(2'd2);
+
+            score         <= 16'd0;
+            speed         <= INITIAL_SPEED[3:0];
+            grace_counter <= 8'd0;
+
+        end else begin
+            state <= next_state;
+
+            if (frame_tick) begin
+                case (state)
+
+                    // Reset positions and difficulty
+                    S_RESET: begin
+                        grace_counter <= 8'd60;   // 1 second of protection
+
+                        player_x <= (SCREEN_W - PLAYER_W_PX) / 2;
+
+                        block0_y <= 10'd0;
+                        block1_y <= 10'd160;
+                        block2_y <= 10'd320;
+
+                        block0_x <= lane_to_x(rand_val[1:0]);
+                        block1_x <= lane_to_x(rand_val[3:2]);
+                        block2_x <= lane_to_x(rand_val[5:4]);
+
+                        score <= 16'd0;
+                        speed <= INITIAL_SPEED[3:0];
+                    end
+
+                    S_PLAY: begin
+                        // Player movement (kept within screen)
+                        if (move_left && player_x > 0) begin
+                            if (player_x > speed)
+                                player_x <= player_x - speed;
+                            else
+                                player_x <= 10'd0;
+                        end else if (move_right &&
+                                     (player_x + PLAYER_W_PX + speed) <= SCREEN_W) begin
+                            player_x <= player_x + speed;
+                        end
+
+                        // Grace period countdown
+                        if (grace_counter > 0)
+                            grace_counter <= grace_counter - 1;
+
+                        // Update blocks & score only if we haven't collided yet
+                        if (!collision) begin
+                            // Block 0
+                            if (block0_y >= SCREEN_H) begin
+                                block0_y <= 10'd0;
+                                block0_x <= lane_to_x(rand_val[1:0]);
+                            end else begin
+                                block0_y <= block0_y + speed;
+                            end
+                            
+                            // Block 1
+                            if (block1_y >= SCREEN_H) begin
+                                block1_y <= 10'd0;
+                                block1_x <= lane_to_x(rand_val[3:2]);
+                            end else begin
+                                block1_y <= block1_y + speed;
+                            end
+
+                            // Block 2
+                            if (block2_y >= SCREEN_H) begin
+                                block2_y <= 10'd0;
+                                block2_x <= lane_to_x(rand_val[5:4]);
+                            end else begin
+                                block2_y <= block2_y + speed;
+                            end
+
+                            // Score increases over time
+                            score <= score + 16'd1;
+
+                            // Increase speed occasionally as score grows
+                            if ((score[7:0] == 8'hFF) && (speed < MAX_SPEED[3:0]))
+                                speed <= speed + 4'd1;
+                        end
+                    end
+
+                    S_GAME_OVER: begin
+                        // Freeze everything (no updates)
+                    end
+
+                    S_TITLE: begin
+                        // Title screen, nothing updates in frame_tick
+                    end
+
+                endcase
+            end
+        end
+    end
+
+endmodule

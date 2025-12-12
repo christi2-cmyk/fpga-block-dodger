@@ -1,0 +1,125 @@
+module falling_blocks_top (
+    input  wire CLOCK_50,
+    input  wire RESET_N,      // active low global reset
+
+    input  wire KEY_LEFT,     // active low buttons (adjust if needed)
+    input  wire KEY_RIGHT,
+    input  wire KEY_RESTART,
+
+    output wire [7:0] VGA_R,
+    output wire [7:0] VGA_G,
+    output wire [7:0] VGA_B,
+    output wire       VGA_HS,
+    output wire       VGA_VS,
+    output wire       VGA_CLK,
+    output wire       VGA_BLANK_N,
+    output wire       VGA_SYNC_N
+);
+
+    // Convert to active-high internal signals
+    wire reset    = ~RESET_N;
+    wire move_left  = ~KEY_LEFT;    // adjust if your inputs are active-high
+    wire move_right = ~KEY_RIGHT;
+    wire restart    = ~KEY_RESTART;
+
+    // 50 MHz → ~25 MHz pixel clock (simple divide by 2)
+    reg pixel_clk_reg;
+    always @(posedge CLOCK_50 or posedge reset) begin
+        if (reset)
+            pixel_clk_reg <= 1'b0;
+        else
+            pixel_clk_reg <= ~pixel_clk_reg;
+    end
+
+    assign VGA_CLK = pixel_clk_reg;
+
+    // VGA timing
+    wire [9:0] pixel_x;
+    wire [9:0] pixel_y;
+    wire       display_on;
+
+    vga_sync vga_inst (
+        .clk        (pixel_clk_reg),
+        .reset      (reset),
+        .x          (pixel_x),
+        .y          (pixel_y),
+        .hsync      (VGA_HS),
+        .vsync      (VGA_VS),
+        .display_on (display_on)
+    );
+
+    // Frame tick: once per frame at top-left pixel
+    wire frame_tick = (pixel_x == 10'd0) && (pixel_y == 10'd0);
+
+    // Random generator (steps once per frame)
+    wire [7:0] rand_val;
+    lfsr8 rng (
+        .clk    (pixel_clk_reg),
+        .reset  (reset),
+        .enable (frame_tick),
+        .value  (rand_val)
+    );
+
+    // Game state
+    wire [9:0] player_x;
+    wire [9:0] player_y;
+    wire [9:0] block0_x, block0_y;
+    wire [9:0] block1_x, block1_y;
+    wire [9:0] block2_x, block2_y;
+    wire [15:0] score;
+    wire        game_over;
+
+    game_logic game (
+        .clk        (pixel_clk_reg),
+        .reset      (reset),
+        .frame_tick (frame_tick),
+        .move_left  (move_left),
+        .move_right (move_right),
+        .restart    (restart),
+        .rand_val   (rand_val),
+
+        .player_x   (player_x),
+        .player_y   (player_y),
+
+        .block0_x   (block0_x),
+        .block0_y   (block0_y),
+        .block1_x   (block1_x),
+        .block1_y   (block1_y),
+        .block2_x   (block2_x),
+        .block2_y   (block2_y),
+
+        .score      (score),
+        .game_over  (game_over)
+    );
+
+    // Pixel color (3-bit -> 8-bit VGA)
+    wire [2:0] rgb;
+
+    game_renderer renderer (
+        .x          (pixel_x),
+        .y          (pixel_y),
+        .display_on (display_on),
+
+        .player_x   (player_x),
+        .player_y   (player_y),
+
+        .block0_x   (block0_x),
+        .block0_y   (block0_y),
+        .block1_x   (block1_x),
+        .block1_y   (block1_y),
+        .block2_x   (block2_x),
+        .block2_y   (block2_y),
+
+        .game_over  (game_over),
+        .rgb        (rgb)
+    );
+
+    // Map 3-bit color to 8-bit channels
+    assign VGA_BLANK_N = display_on;
+    assign VGA_SYNC_N  = 1'b0;
+
+    assign VGA_R = display_on ? (rgb[2] ? 8'hFF : 8'h00) : 8'h00;
+    assign VGA_G = display_on ? (rgb[1] ? 8'hFF : 8'h00) : 8'h00;
+    assign VGA_B = display_on ? (rgb[0] ? 8'hFF : 8'h00) : 8'h00;
+
+endmodule
